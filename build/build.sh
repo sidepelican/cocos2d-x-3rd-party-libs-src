@@ -235,45 +235,32 @@ check_invalid_build_mode $build_mode
 function create_xcframework()
 {
     library_name=$1
-    copied_library_name=$2
-    if [ -z $copied_library_name ]; then
-        copied_library_name=$library_name
+    should_combine=$2
+    archive_name=lib${library_name}.a
+    echo "Creating xcframework as $library_name.xcframework"
+
+    if "${should_combine}"; then
+        archive_name=combined.a
+        libtool -static -o ios/$library_name/prebuilt/$archive_name ios/$library_name/prebuilt/lib*.a
+        libtool -static -o iossim/$library_name/prebuilt/$archive_name iossim/$library_name/prebuilt/lib*.a
     fi
 
-    echo "Creating xcframework as $copied_library_name.xcframework"
+    ios_lib_path="ios/$library_name/prebuilt/$archive_name"
+    iossim_lib_path="iossim/$library_name/prebuilt/$archive_name"
 
-    ios_dir="ios/${library_name}_ios"
-    iossim_dir="ios/${library_name}_iossim"
-
-    # Cleanup old directories
-    rm -rf $ios_dir $iossim_dir
-
-    ios_lib_path="ios/$library_name/prebuilt/lib$copied_library_name.a"
-    iossim_lib_path="iossim/$library_name/prebuilt/lib$copied_library_name.a"
-
-    if [ ! -f $ios_lib_path ]; then
-        echo "$ios_lib_path doesn't exist. skipping..."
-        return
-    fi
-    if [ ! -f $iossim_lib_path ]; then
-        echo "$iossim_lib_path doesn't exist. skipping..."
-        return
-    fi
-    
     # 古いものがあれば削除
-    rm -rf ios/$library_name/$copied_library_name.xcframework
+    rm -rf ios/$library_name/$library_name.xcframework
 
-    # Create xcframework
     set -x
     xcodebuild -create-xcframework \
         -library $ios_lib_path \
         -headers ios/$library_name/include \
         -library $iossim_lib_path \
         -headers iossim/$library_name/include \
-        -output ios/$library_name/$copied_library_name.xcframework
+        -output ios/$library_name/$library_name.xcframework
     set +x
 
-    echo "xcframework $copied_library_name.xcframework created successfully"
+    echo "xcframework $library_name.xcframework created successfully"
 }
 
 function create_fat_library()
@@ -312,11 +299,6 @@ function create_fat_library()
     # remove debugging info don't strip
     # $STRIP -S $lcibrary_name/prebuilt/lib$library_name.a
     $LIPO -info $fat_lib_path
-
-    # 順番的にios→iossimの順番でビルドされるため、iossimの段階でxcframeworkを作成できるので無理やりここで。
-    if [ $platform_name = "iossim" ];then
-        create_xcframework $2 $3
-    fi
 }
 
 function set_build_mode_cflags()
@@ -561,6 +543,15 @@ function build_libraries()
                 do
                     create_fat_library $platform_name $archive_name $archive_element
                 done
+            fi
+
+            # 順番的にios→iossimの順番でビルドされるため、iossimの段階でxcframeworkを作成できるので雑にここで
+            if [ $platform_name = "iossim" ];then
+                if [ ! -z $parse_archive_list ]; then
+                    create_xcframework $archive_name true
+                else
+                    create_xcframework $archive_name false
+                fi
             fi
 
             parse_dependent_archive_list=${lib}_dependent_archive_list
