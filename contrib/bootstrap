@@ -35,6 +35,7 @@ usage()
 BUILD=
 HOST=
 PREFIX=
+PLATFORM_NAME=
 PKGS_ENABLE=
 PKGS_DISABLE=
 
@@ -60,6 +61,9 @@ do
 		--prefix=*)
 			PREFIX="${1#--prefix=}"
 			;;
+        --platform_name=*)
+            PLATFORM_NAME="${1#--platform_name=}"
+            ;;
 		--disable-*)
 			PKGS_DISABLE="${PKGS_DISABLE} ${1#--disable-}"
 			;;
@@ -181,7 +185,7 @@ check_tvos_sdk()
 check_ios_sdk()
 {
    [ -z "${MY_TARGET_ARCH}" ] && echo "You must set MY_TARGET_ARCH environment variable" && exit 1
-    if [ $MY_TARGET_ARCH = "i386" ] || [ $MY_TARGET_ARCH = "x86_64" ];then
+    if [ $PLATFORM_NAME = "iossim" ];then
         IOS_PLATFORM="Simulator"
     else
         IOS_PLATFORM="OS"
@@ -191,8 +195,7 @@ check_ios_sdk()
    
    if test -z "$SDKROOT"
    then
-      SDKROOT=`xcode-select -print-path`/Platforms/iPhone${IOS_PLATFORM}.platform/Developer/SDKs/iPhone${IOS_PLATFORM}${SDK_VERSION}.sdk
-      echo "SDKROOT not specified, assuming $SDKROOT"
+      SDKROOT=$(xcode-select -print-path)/Platforms/iPhone${IOS_PLATFORM}.platform/Developer/SDKs/iPhone${IOS_PLATFORM}${SDK_VERSION}.sdk
    else
       SDKROOT="$SDKROOT"
       fi
@@ -202,6 +205,8 @@ check_ios_sdk()
       echo "*** ${SDKROOT} does not exist, please install required SDK, or set SDKROOT manually. ***"
       exit 1
    fi
+
+   echo "SDKROOT: $SDKROOT"
    add_make "IOS_SDK=${SDKROOT}"
    add_make "IOS_TOOLCHAIN=${SDKROOT}/../../usr/bin/"
 
@@ -214,15 +219,14 @@ check_ios_sdk()
    fi
     
    if [ "$IOS_PLATFORM" = "OS" ]; then
-       EX_CFLAGS="-isysroot ${SDKROOT} -arch ${MY_TARGET_ARCH} -miphoneos-version-min=7.0"
-       if [ "${MY_TARGET_ARCH}" != "arm64" ]; then
-           EX_CFLAGS="${EX_CFLAGS} -mcpu=cortex-a8"
-       fi
+       EX_CFLAGS="-isysroot ${SDKROOT} -arch ${MY_TARGET_ARCH} -mios-version-min=16.0"
    else
-       EX_CFLAGS="-isysroot ${SDKROOT} -arch ${MY_TARGET_ARCH} -miphoneos-version-min=7.0"
+       EX_CFLAGS="-isysroot ${SDKROOT} -arch ${MY_TARGET_ARCH} -mios-simulator-version-min=16.0"
    fi
    add_make "EXTRA_CFLAGS := ${EX_CFLAGS}"
-   add_make "EXTRA_LDFLAGS := -L${SDKROOT}/usr/lib -arch ${MY_TARGET_ARCH} -isysroot ${SDKROOT} -miphoneos-version-min=7.0"
+   add_make "EXTRA_CPPFLAGS := ${EX_CFLAGS}"
+   add_make "EXTRA_CXXFLAGS := ${EX_CFLAGS}"
+   add_make "EXTRA_LDFLAGS := -L${SDKROOT}/usr/lib -arch ${MY_TARGET_ARCH} -isysroot ${SDKROOT}"
 }
 
 check_macosx_sdk()
@@ -332,11 +336,11 @@ echo "The host is $OS"
 case "${OS}" in
 	apple-darwin*)
 		if test -n "$BUILDFORIOS"
-		then
+        then
 			check_ios_sdk
 			add_make_enabled "HAVE_IOS" "HAVE_DARWIN_OS" "HAVE_BSD"  "HAVE_ARMV7A" "HAVE_NEON"
 		elif test -n "$BUILDFORTVOS"
-		then
+        then
 			check_tvos_sdk
 			add_make_enabled "HAVE_TVOS" "HAVE_DARWIN_OS" "HAVE_BSD" "HAVE_NEON"
 		else

@@ -22,13 +22,13 @@ function contains() {
     local n=$#
     local value=${!n}
     for ((i=1;i < $#;i++)) {
-            if [ "${!i}" == "${value}" ]; then
-                echo "y"
-                return 0
-            fi
-        }
-        echo "n"
-        return 1
+        if [ "${!i}" == "${value}" ]; then
+            echo "y"
+            return 0
+        fi
+    }
+    echo "n"
+    return 1
 }
 
 function usage()
@@ -158,7 +158,7 @@ fi
 
 if test -z "$build_mode"
 then
-    echo "You don't specify a valid build mode, use release mode"
+    echo "Using default build mode: $cfg_default_build_mode"
     build_mode=$cfg_default_build_mode
 fi
 
@@ -231,11 +231,57 @@ function check_invalid_build_mode() {
 
 check_invalid_build_mode $build_mode
 
-
-function create_fat_library()
+# create xcframework for iOS
+function create_xcframework()
 {
     library_name=$1
     copied_library_name=$2
+    if [ -z $copied_library_name ]; then
+        copied_library_name=$library_name
+    fi
+
+    echo "Creating xcframework as $copied_library_name.xcframework"
+
+    ios_dir="ios/${library_name}_ios"
+    iossim_dir="ios/${library_name}_iossim"
+
+    # Cleanup old directories
+    rm -rf $ios_dir $iossim_dir
+
+    ios_lib_path="ios/$library_name/prebuilt/lib$copied_library_name.a"
+    iossim_lib_path="iossim/$library_name/prebuilt/lib$copied_library_name.a"
+
+    if [ ! -f $ios_lib_path ]; then
+        echo "$ios_lib_path doesn't exist. skipping..."
+        return
+    fi
+    if [ ! -f $iossim_lib_path ]; then
+        echo "$iossim_lib_path doesn't exist. skipping..."
+        return
+    fi
+    
+    cp ../contrib/src/$library_name/module.modulemap ios/$library_name/include
+    cp ../contrib/src/$library_name/module.modulemap iossim/$library_name/include
+
+    # 古いものがあれば削除
+    rm -rf ios/$library_name/$copied_library_name.xcframework
+
+    # Create xcframework
+    xcodebuild -create-xcframework \
+        -library $ios_lib_path \
+        -headers ios/$library_name/include \
+        -library $iossim_lib_path \
+        -headers iossim/$library_name/include \
+        -output ios/$library_name/$copied_library_name.xcframework
+
+    echo "xcframework $copied_library_name.xcframework created successfully"
+}
+
+function create_fat_library()
+{
+    platform_name=$1
+    library_name=$2
+    copied_library_name=$3
     if [ -z $copied_library_name ];then
         copied_library_name=$library_name
     fi
@@ -246,29 +292,33 @@ function create_fat_library()
     LIPO="xcrun -sdk iphoneos lipo"
     STRIP="xcrun -sdk iphoneos strip"
 
-    fat_lib_path=$cfg_platform_name/$library_name/prebuilt/lib$copied_library_name.a
+    fat_lib_path=$platform_name/$library_name/prebuilt/lib$copied_library_name.a
 
     if [ -f $fat_lib_path ]; then
         echo "removing old fat library..."
         rm $fat_lib_path
     fi
 
-    all_static_libs=$(find $cfg_platform_name/$library_name/prebuilt -type f -name "lib$copied_library_name.a")
+    all_static_libs=$(find $platform_name/$library_name/prebuilt -type f -name "lib$copied_library_name.a")
     if [ -z "$all_static_libs" ];then
         echo "warning: lib$copied_library_name.a doesn't exist"
         return
     fi
 
-    $LIPO -create  $all_static_libs \
+    $LIPO -create $all_static_libs \
           -output $fat_lib_path
 
     # rm $all_static_libs
 
     # remove debugging info don't strip
-    # $STRIP -S $library_name/prebuilt/lib$library_name.a
+    # $STRIP -S $lcibrary_name/prebuilt/lib$library_name.a
     $LIPO -info $fat_lib_path
-}
 
+    # 順番的にios→iossimの順番でビルドされるため、iossimの段階でxcframeworkを作成できるので無理やりここで。
+    if [ $platform_name = "iossim" ];then
+        create_xcframework $2 $3
+    fi
+}
 
 function set_build_mode_cflags()
 {
@@ -309,222 +359,232 @@ function generate_android_standalone_toolchain()
       --install-dir="${toolchain_path}"
 }
 
-# build all the libraries for different arches
-for lib in "${build_library[@]}"
-do
-    library_name=$lib
+function build_libraries()
+{
+    local platform_name=$1
 
-    parser_lib_archive_alias=${lib}_archive_alias
-    archive_name=${!parser_lib_archive_alias}
-    if [ -z $archive_name ];then
-        archive_name=$lib
-    fi
-
-
-    mkdir -p $cfg_platform_name/$archive_name/include/
-
-    for arch in "${build_arches[@]}"
+    # build all the libraries for different arches
+    for lib in "${build_library[@]}"
     do
-        #skip build libraries with certain arch
-        ignore_arch_library=${lib}_ignore_arch_list
-        ignore_arch_list=(${!ignore_arch_library})
-        ignore_arch_list_array=(${ignore_arch_list//,/ })
-        if [ ! -z ${ignore_arch_list} ]; then
-            echo ${ignore_arch_list}
-            if [ $(contains "${ignore_arch_list_array[@]}" $arch) == "y" ];then
-                echo "ingore $lib for $arch"
-                continue
-            fi
+        library_name=$lib
+
+        parser_lib_archive_alias=${lib}_archive_alias
+        archive_name=${!parser_lib_archive_alias}
+        if [ -z $archive_name ];then
+            archive_name=$lib
         fi
 
-        #set build mode flags -- debug or release
-        set_build_mode_cflags
 
-        #determine wether use mthumb or not
-        parse_use_mthumb=cfg_${lib}_${arch}_use_mthumb
-        use_mthumb=${!parse_use_mthumb}
-        echo $use_mthumb
-        if [ -z $use_mthumb ];then
-            use_mthumb=yes
-        fi
+        mkdir -p $platform_name/$archive_name/include/
 
-        export ANDROID_USE_MTHUMB=$use_mthumb
-        export ANDROID_STL_VERSION=$cfg_default_build_stl
-
-        install_library_path="install-${cfg_platform_name}"
-        build_library_path=$cfg_platform_name
-
-        echo "build $arch for $lib in $cfg_platform_name"
-
-        parse_arch_folder_name=cfg_${arch}_alias_folder_name
-        original_arch_name=${!parse_arch_folder_name}
-        if [ -z $original_arch_name ];then
-            original_arch_name=$arch
-        fi
-
-        MY_TARGET_ARCH=$original_arch_name
-        export MY_TARGET_ARCH
-
-        # TODO: add more build and target options here
-        if [ $cfg_platform_name = "ios" ];then
-            export BUILDFORIOS="yes"
-        fi
-        
-        if [ $cfg_platform_name = "tvos" ];then
-            export BUILDFORTVOS="yes"
-        fi
-
-        if [ $cfg_platform_name = "android" ];then
-            if [ $MY_TARGET_ARCH = "arm64-v8a" ];then
-                export ANDROID_API=$cfg_default_arm64_build_api
-            else
-                export ANDROID_API=$build_api
+        for arch in "${build_arches[@]}"
+        do
+            #skip build libraries with certain arch
+            ignore_arch_library=${lib}_ignore_arch_list
+            ignore_arch_list=(${!ignore_arch_library})
+            ignore_arch_list_array=(${ignore_arch_list//,/ })
+            if [ ! -z ${ignore_arch_list} ]; then
+                echo ${ignore_arch_list}
+                if [ $(contains "${ignore_arch_list_array[@]}" $arch) == "y" ];then
+                    echo "ingore $lib for $arch"
+                    continue
+                fi
             fi
 
-            generate_android_standalone_toolchain $MY_TARGET_ARCH $ANDROID_API
-            export ANDROID_TOOLCHAIN_PATH="${toolchain_path}"
-            export PATH="${toolchain_path}/bin:${PATH}"
-        fi
-        echo "build api is $ANDROID_API."
+            #set build mode flags -- debug or release
+            set_build_mode_cflags
 
-        if [ $cfg_platform_name = "tizen" ];then
-            export TIZEN_SDK_VERSION=$cfg_default_tizen_sdk_version
-        fi
+            #determine wether use mthumb or not
+            parse_use_mthumb=cfg_${lib}_${arch}_use_mthumb
+            use_mthumb=${!parse_use_mthumb}
+            echo $use_mthumb
+            if [ -z $use_mthumb ];then
+                use_mthumb=yes
+            fi
 
+            export ANDROID_USE_MTHUMB=$use_mthumb
+            export ANDROID_STL_VERSION=$cfg_default_build_stl
 
-        mkdir -p "${top_dir}/contrib/${cfg_platform_name}-${arch}"
-        cd "${top_dir}/contrib/${cfg_platform_name}-${arch}"
+            install_library_path="install-$platform_name"
+            build_library_path=$platform_name
 
-        PREFIX="${top_dir}/contrib/install-${cfg_platform_name}/${arch}"
+            echo "build $arch for $lib in $platform_name"
 
-        my_target_host=cfg_${arch}_host_machine
-        if [ $cfg_is_cross_compile = "no" ];then
-            cfg_build_machine=${!my_target_host}
-        fi
+            parse_arch_folder_name=cfg_${arch}_alias_folder_name
+            original_arch_name=${!parse_arch_folder_name}
+            if [ -z $original_arch_name ];then
+                original_arch_name=$arch
+            fi
 
-        export BUILD_LIB=$lib
+            MY_TARGET_ARCH=$original_arch_name
+            export MY_TARGET_ARCH
 
-        ../bootstrap --enable-$lib \
-                     --build=$cfg_build_machine \
-                     --host=${!my_target_host} \
-                     --prefix=${PREFIX}
+            # TODO: add more build and target options here
+            if [ $platform_name = "ios" ] || [ $platform_name = "iossim" ];then
+                export BUILDFORIOS="yes"
+            fi
+            
+            if [ $platform_name = "tvos" ];then
+                export BUILDFORTVOS="yes"
+            fi
 
-
-        echo "MY_TARGET_ARCH := ${MY_TARGET_ARCH}" >> config.mak
-        echo "OPTIM := ${OPTIM}" >> config.mak
-        ENABLE_BITCODE=$cfg_build_bitcode
-        export ENABLE_BITCODE
-        echo "ENABLE_BITCODE := ${cfg_build_bitcode}" >> config.mak
-
-        make
-
-        cd -
-
-        local_library_install_path=$cfg_platform_name/$archive_name/prebuilt/$original_arch_name
-        if [ ! -d $local_library_install_path ]; then
-            echo "create folder for library with specify arch. $local_library_install_path"
-            mkdir -p $local_library_install_path
-        fi
-
-        #determine the .a achive name with a specified libraries
-        parse_original_lib_name=${lib}_original_name
-        original_archive_name=${!parse_original_lib_name}
-        if [ -z $original_archive_name ];then
-            original_archive_name=$archive_name
-        fi
-
-        #copy .a archive from install-platform folder
-        if [ -f $top_dir/contrib/$install_library_path/$arch/lib/lib$original_archive_name.a ];then
-            cp $top_dir/contrib/$install_library_path/$arch/lib/lib$original_archive_name.a $local_library_install_path/lib$archive_name.a
-        fi
-
-        #copy archive list if exists
-        parse_archive_list=${lib}_archive_list
-        parse_archive_list=${!parse_archive_list}
-        if [ ! -z $parse_archive_list ];then
-            echo "copying archive list..."
-            echo $parse_archive_list
-            parse_archive_list=(${parse_archive_list//,/ })
-            echo $parse_archive_list
-
-            for archive_element in ${parse_archive_list[@]}
-            do
-                cp $top_dir/contrib/$install_library_path/$arch/lib/lib${archive_element}.a $local_library_install_path/lib${archive_element}.a
-
-            done
-        fi
-
-
-        #copy dependent .a archive
-        parse_dependent_archive_list=${lib}_dependent_archive_list
-        original_dependent_archive_list=${!parse_dependent_archive_list}
-        if [ ! -z $original_dependent_archive_list ];then
-            echo "copying dependent archives..."
-            original_dependent_archive_list=(${original_dependent_archive_list//,/ })
-
-            for dep_archive in ${original_dependent_archive_list[@]}
-            do
-
-                dep_archive_alias=${dep_archive}_archive_alias
-                dep_archive_name=${!dep_archive_alias}
-                if [ -z $dep_archive_name ]; then
-                    dep_archive_name=$dep_archive
+            if [ $platform_name = "android" ];then
+                if [ $MY_TARGET_ARCH = "arm64-v8a" ];then
+                    export ANDROID_API=$cfg_default_arm64_build_api
+                else
+                    export ANDROID_API=$build_api
                 fi
 
-                local_library_install_path=$cfg_platform_name/${dep_archive}/prebuilt/$original_arch_name
+                generate_android_standalone_toolchain $MY_TARGET_ARCH $ANDROID_API
+                export ANDROID_TOOLCHAIN_PATH="${toolchain_path}"
+                export PATH="${toolchain_path}/bin:${PATH}"
+            fi
+            echo "build api is $ANDROID_API."
+
+            if [ $platform_name = "tizen" ];then
+                export TIZEN_SDK_VERSION=$cfg_default_tizen_sdk_version
+            fi
+
+
+            mkdir -p "${top_dir}/contrib/$platform_name-${arch}"
+            cd "${top_dir}/contrib/$platform_name-${arch}"
+
+            PREFIX="${top_dir}/contrib/install-$platform_name/${arch}"
+
+            my_target_host=cfg_${arch}_host_machine
+            if [ $cfg_is_cross_compile = "no" ];then
+                cfg_build_machine=${!my_target_host}
+            fi
+
+            export BUILD_LIB=$lib
+
+            ../bootstrap --enable-$lib \
+                        --build=$cfg_build_machine \
+                        --host=${!my_target_host} \
+                        --prefix=${PREFIX} \
+                        --platform_name=$platform_name
+
+
+            echo "MY_TARGET_ARCH := ${MY_TARGET_ARCH}" >> config.mak
+            echo "OPTIM := ${OPTIM}" >> config.mak
+            ENABLE_BITCODE=$cfg_build_bitcode
+            export ENABLE_BITCODE
+            echo "ENABLE_BITCODE := ${cfg_build_bitcode}" >> config.mak
+
+            make
+
+            cd -
+
+            local_library_install_path=$platform_name/$archive_name/prebuilt/$original_arch_name
+            if [ ! -d $local_library_install_path ]; then
+                echo "create folder for library with specify arch. $local_library_install_path"
                 mkdir -p $local_library_install_path
-                cp $top_dir/contrib/$install_library_path/$arch/lib/lib${dep_archive_name}.a $local_library_install_path/lib${dep_archive_name}.a
+            fi
 
+            #determine the .a achive name with a specified libraries
+            parse_original_lib_name=${lib}_original_name
+            original_archive_name=${!parse_original_lib_name}
+            if [ -z $original_archive_name ];then
+                original_archive_name=$archive_name
+            fi
+
+            #copy .a archive from install-platform folder
+            if [ -f $top_dir/contrib/$install_library_path/$arch/lib/lib$original_archive_name.a ];then
+                cp $top_dir/contrib/$install_library_path/$arch/lib/lib$original_archive_name.a $local_library_install_path/lib$archive_name.a
+            fi
+
+            #copy archive list if exists
+            parse_archive_list=${lib}_archive_list
+            parse_archive_list=${!parse_archive_list}
+            if [ ! -z $parse_archive_list ];then
+                echo "copying archive list..."
+                echo $parse_archive_list
+                parse_archive_list=(${parse_archive_list//,/ })
+                echo $parse_archive_list
+
+                for archive_element in ${parse_archive_list[@]}
+                do
+                    cp $top_dir/contrib/$install_library_path/$arch/lib/lib${archive_element}.a $local_library_install_path/lib${archive_element}.a
+
+                done
+            fi
+
+
+            #copy dependent .a archive
+            parse_dependent_archive_list=${lib}_dependent_archive_list
+            original_dependent_archive_list=${!parse_dependent_archive_list}
+            if [ ! -z $original_dependent_archive_list ];then
+                echo "copying dependent archives..."
+                original_dependent_archive_list=(${original_dependent_archive_list//,/ })
+
+                for dep_archive in ${original_dependent_archive_list[@]}
+                do
+
+                    dep_archive_alias=${dep_archive}_archive_alias
+                    dep_archive_name=${!dep_archive_alias}
+                    if [ -z $dep_archive_name ]; then
+                        dep_archive_name=$dep_archive
+                    fi
+
+                    local_library_install_path=$platform_name/${dep_archive}/prebuilt/$original_arch_name
+                    mkdir -p $local_library_install_path
+                    cp $top_dir/contrib/$install_library_path/$arch/lib/lib${dep_archive_name}.a $local_library_install_path/lib${dep_archive_name}.a
+
+                done
+            fi
+
+
+            echo "Copying needed header files"
+            copy_include_file_path=${lib}_header_files
+            copy_header_list=${!copy_include_file_path//,/ }
+            for copy_header_pattern in ${copy_header_list[@]}
+            do
+                cp -r $top_dir/contrib/$install_library_path/$arch/include/${copy_header_pattern} $platform_name/$archive_name/include
             done
-        fi
 
-
-        echo "Copying needed header files"
-        copy_include_file_path=${lib}_header_files
-        copy_header_list=${!copy_include_file_path//,/ }
-        for copy_header_pattern in ${copy_header_list[@]}
-        do
-            cp  -rv $top_dir/contrib/$install_library_path/$arch/include/${copy_header_pattern} $cfg_platform_name/$archive_name/include
+            echo "cleaning up"
+            if [ $cfg_is_cleanup_after_build = "yes" ];then
+                rm -rf $top_dir/contrib/$install_library_path
+                rm -rf $top_dir/contrib/$build_library_path-$arch
+            fi
         done
 
-        echo "cleaning up"
-        if [ $cfg_is_cleanup_after_build = "yes" ];then
-            rm -rf $top_dir/contrib/$install_library_path
-            rm -rf $top_dir/contrib/$build_library_path-$arch
+        echo $cfg_build_fat_library
+        if [ $cfg_build_fat_library = "yes" ];then
+
+            create_fat_library $platform_name $archive_name
+
+            # parse_archive_list=${lib}_archive_list
+            # parse_archive_list=${!parse_archive_list}
+            # if [ ! -z $parse_archive_list ];then
+            #     parse_archive_list=(${parse_archive_list//,/ })
+            #     for archive_element in ${parse_archive_list[@]}
+            #     do
+            #         create_fat_library $platform_name $archive_name $archive_element
+            #     done
+            # fi
+
+            # parse_dependent_archive_list=${lib}_dependent_archive_list
+            # original_dependent_archive_list=${!parse_dependent_archive_list}
+            # if [ ! -z $original_dependent_archive_list ];then
+            #     echo "create fat library for dependent archives..."
+            #     original_dependent_archive_list=(${original_dependent_archive_list//,/ })
+
+            #     for dep_archive in ${original_dependent_archive_list[@]}
+            #     do
+            #         dep_archive_alias=${dep_archive}_archive_alias
+            #         dep_archive_name=${!dep_archive_alias}
+            #         if [ -z $dep_archive_name ]; then
+            #             dep_archive_name=$dep_archive
+            #         fi
+            #         create_fat_library $platform_name $dep_archive $dep_archive_name
+            #     done
+            # fi
         fi
     done
+}
 
-    echo $cfg_build_fat_library
-    if [ $cfg_build_fat_library = "yes" ];then
-
-        create_fat_library $archive_name
-
-        parse_archive_list=${lib}_archive_list
-        parse_archive_list=${!parse_archive_list}
-        if [ ! -z $parse_archive_list ];then
-            parse_archive_list=(${parse_archive_list//,/ })
-            for archive_element in ${parse_archive_list[@]}
-            do
-                create_fat_library $archive_name $archive_element
-            done
-        fi
-
-        parse_dependent_archive_list=${lib}_dependent_archive_list
-        original_dependent_archive_list=${!parse_dependent_archive_list}
-        if [ ! -z $original_dependent_archive_list ];then
-            echo "create fat library for dependent archives..."
-            original_dependent_archive_list=(${original_dependent_archive_list//,/ })
-
-            for dep_archive in ${original_dependent_archive_list[@]}
-            do
-                dep_archive_alias=${dep_archive}_archive_alias
-                dep_archive_name=${!dep_archive_alias}
-                if [ -z $dep_archive_name ]; then
-                    dep_archive_name=$dep_archive
-                fi
-                create_fat_library $dep_archive $dep_archive_name
-            done
-        fi
-    fi
-
-done
+build_libraries $cfg_platform_name
+if [ $cfg_platform_name = "ios" ];then
+    build_libraries "iossim"
+fi
