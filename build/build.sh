@@ -260,19 +260,18 @@ function create_xcframework()
         return
     fi
     
-    cp ../contrib/src/$library_name/module.modulemap ios/$library_name/include
-    cp ../contrib/src/$library_name/module.modulemap iossim/$library_name/include
-
     # 古いものがあれば削除
     rm -rf ios/$library_name/$copied_library_name.xcframework
 
     # Create xcframework
+    set -x
     xcodebuild -create-xcframework \
         -library $ios_lib_path \
         -headers ios/$library_name/include \
         -library $iossim_lib_path \
         -headers iossim/$library_name/include \
         -output ios/$library_name/$copied_library_name.xcframework
+    set +x
 
     echo "xcframework $copied_library_name.xcframework created successfully"
 }
@@ -554,32 +553,32 @@ function build_libraries()
 
             create_fat_library $platform_name $archive_name
 
-            # parse_archive_list=${lib}_archive_list
-            # parse_archive_list=${!parse_archive_list}
-            # if [ ! -z $parse_archive_list ];then
-            #     parse_archive_list=(${parse_archive_list//,/ })
-            #     for archive_element in ${parse_archive_list[@]}
-            #     do
-            #         create_fat_library $platform_name $archive_name $archive_element
-            #     done
-            # fi
+            parse_archive_list=${lib}_archive_list
+            parse_archive_list=${!parse_archive_list}
+            if [ ! -z $parse_archive_list ];then
+                parse_archive_list=(${parse_archive_list//,/ })
+                for archive_element in ${parse_archive_list[@]}
+                do
+                    create_fat_library $platform_name $archive_name $archive_element
+                done
+            fi
 
-            # parse_dependent_archive_list=${lib}_dependent_archive_list
-            # original_dependent_archive_list=${!parse_dependent_archive_list}
-            # if [ ! -z $original_dependent_archive_list ];then
-            #     echo "create fat library for dependent archives..."
-            #     original_dependent_archive_list=(${original_dependent_archive_list//,/ })
+            parse_dependent_archive_list=${lib}_dependent_archive_list
+            original_dependent_archive_list=${!parse_dependent_archive_list}
+            if [ ! -z $original_dependent_archive_list ];then
+                echo "create fat library for dependent archives..."
+                original_dependent_archive_list=(${original_dependent_archive_list//,/ })
 
-            #     for dep_archive in ${original_dependent_archive_list[@]}
-            #     do
-            #         dep_archive_alias=${dep_archive}_archive_alias
-            #         dep_archive_name=${!dep_archive_alias}
-            #         if [ -z $dep_archive_name ]; then
-            #             dep_archive_name=$dep_archive
-            #         fi
-            #         create_fat_library $platform_name $dep_archive $dep_archive_name
-            #     done
-            # fi
+                for dep_archive in ${original_dependent_archive_list[@]}
+                do
+                    dep_archive_alias=${dep_archive}_archive_alias
+                    dep_archive_name=${!dep_archive_alias}
+                    if [ -z $dep_archive_name ]; then
+                        dep_archive_name=$dep_archive
+                    fi
+                    create_fat_library $platform_name $dep_archive $dep_archive_name
+                done
+            fi
         fi
     done
 }

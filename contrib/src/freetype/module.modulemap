@@ -1,8 +1,0 @@
-module "freetype" {
-    header "ft2build.h"
-    header "freetype/freetype.h"
-
-    link "z"
-
-    export *
-}
