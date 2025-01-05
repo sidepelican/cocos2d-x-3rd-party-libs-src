@@ -3,7 +3,7 @@
 GLSLOPT_GITURL := https://github.com/cocos2d/glsl-optimizer
 
 $(TARBALLS)/glsl-optimizer-git.tar.xz:
-	$(call download_git,$(GLSLOPT_GITURL),master,23f7d591a57)
+	$(call download_git,$(GLSLOPT_GITURL),master,cdfc9efaf9402c78762a1b35c3e523c602c4ca6a)
 
 .sum-glslopt: glsl-optimizer-git.tar.xz
 	$(warning $@ not implemented)
