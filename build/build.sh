@@ -410,11 +410,7 @@ function build_libraries()
             fi
 
             if [ $platform_name = "android" ];then
-                if [ $MY_TARGET_ARCH = "arm64-v8a" ];then
-                    export ANDROID_API=$cfg_default_arm64_build_api
-                else
-                    export ANDROID_API=$build_api
-                fi
+                export ANDROID_API=$build_api
 
                 generate_android_standalone_toolchain $MY_TARGET_ARCH $ANDROID_API
                 export ANDROID_TOOLCHAIN_PATH="${toolchain_path}"
@@ -443,8 +439,8 @@ function build_libraries()
                         --build=$cfg_build_machine \
                         --host=${!my_target_host} \
                         --prefix=${PREFIX} \
-                        --platform_name=$platform_name
-
+                        --platform_name=$platform_name \
+                        --min_ios=$cfg_default_min_ios
 
             echo "MY_TARGET_ARCH := ${MY_TARGET_ARCH}" >> config.mak
             echo "OPTIM := ${OPTIM}" >> config.mak

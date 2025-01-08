@@ -1,5 +1,5 @@
 # OPENSSL
-OPENSSL_VERSION := 1.1.0c
+OPENSSL_VERSION := 1.1.1w
 OPENSSL_URL := https://www.openssl.org/source/openssl-$(OPENSSL_VERSION).tar.gz
 
 OPENSSL_EXTRA_CONFIG_1=no-shared no-unit-test
@@ -41,14 +41,10 @@ endif
 endif
 
 ifdef HAVE_ANDROID
-export ANDROID_SYSROOT=$(ANDROID_TOOLCHAIN_PATH)/sysroot
-export SYSROOT=$(ANDROID_SYSROOT)
-export NDK_SYSROOT=$(ANDROID_SYSROOT)
-export ANDROID_NDK_SYSROOT=$(ANDROID_SYSROOT)
-export CROSS_SYSROOT=$(ANDROID_SYSROOT)
+export ANDROID_NDK_HOME=$(ANDROID_TOOLCHAIN_PATH)
 
 ifeq ($(MY_TARGET_ARCH),arm64-v8a)
-OPENSSL_CONFIG_VARS=android64-aarch64
+OPENSSL_CONFIG_VARS=android-arm64
 endif
 
 ifeq ($(MY_TARGET_ARCH),armeabi-v7a)
@@ -137,12 +133,6 @@ $(TARBALLS)/openssl-$(OPENSSL_VERSION).tar.gz:
 
 openssl: openssl-$(OPENSSL_VERSION).tar.gz .sum-openssl
 	$(UNPACK)
-ifdef HAVE_ANDROID
-	$(APPLY) $(SRC)/openssl/android-clang.patch
-endif
-ifdef HAVE_IOS
-	$(APPLY) $(SRC)/openssl/ios-armv7-crash.patch
-endif
 	$(MOVE)
 
 .openssl: openssl
@@ -164,6 +154,10 @@ endif
 ifdef HAVE_MACOSX
 	cd $< && perl -i -pe "s|^CFLAGS=(.*) -DNDEBUG (.*)-O3|CFLAGS=\\1 \\2 ${OPTIM}|g" Makefile
 	cd $< && perl -i -pe "s|^CFLAGS_Q=(.*) -DNDEBUG (.*)|CFLAGS_Q=\\1 \\2 ${OPTIM}|g" Makefile
+endif
+ifdef HAVE_ANDROID
+	cd $< && perl -i -pe 's|^AR=\$$\(CROSS_COMPILE\)llvm-ar|AR=llvm-ar|g' Makefile
+	cd $< && perl -i -pe 's|^RANLIB=\$$\(CROSS_COMPILE\)llvm-ranlib|RANLIB=llvm-ranlib|g' Makefile
 endif
 	cd $< && $(MAKE) install_sw
 	touch $@

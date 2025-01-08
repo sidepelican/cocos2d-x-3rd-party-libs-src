@@ -36,6 +36,7 @@ BUILD=
 HOST=
 PREFIX=
 PLATFORM_NAME=
+MIN_IOS=
 PKGS_ENABLE=
 PKGS_DISABLE=
 
@@ -63,6 +64,9 @@ do
 			;;
         --platform_name=*)
             PLATFORM_NAME="${1#--platform_name=}"
+            ;;
+        --min_ios=*)
+            MIN_IOS="${1#--min_ios=}"
             ;;
 		--disable-*)
 			PKGS_DISABLE="${PKGS_DISABLE} ${1#--disable-}"
@@ -219,9 +223,9 @@ check_ios_sdk()
    fi
     
    if [ "$IOS_PLATFORM" = "OS" ]; then
-       EX_CFLAGS="-isysroot ${SDKROOT} -arch ${MY_TARGET_ARCH} -mios-version-min=16.0"
+       EX_CFLAGS="-isysroot ${SDKROOT} -arch ${MY_TARGET_ARCH} -mios-version-min=${MIN_IOS}"
    else
-       EX_CFLAGS="-isysroot ${SDKROOT} -arch ${MY_TARGET_ARCH} -mios-simulator-version-min=16.0"
+       EX_CFLAGS="-isysroot ${SDKROOT} -arch ${MY_TARGET_ARCH} -mios-simulator-version-min=${MIN_IOS}"
    fi
    add_make "EXTRA_CFLAGS := ${EX_CFLAGS}"
    add_make "EXTRA_CPPFLAGS := ${EX_CFLAGS}"
@@ -269,7 +273,7 @@ check_macosx_sdk()
 
 check_android_sdk()
 {
-        ANDROID_ABI=$MY_TARGET_ARCH
+    ANDROID_ABI=$MY_TARGET_ARCH
         
 	[ -z "${ANDROID_NDK}" ] && echo "You must set ANDROID_NDK environment variable" && exit 1
 	add_make "ANDROID_NDK := ${ANDROID_NDK}"
@@ -352,7 +356,7 @@ case "${OS}" in
 		add_make_enabled "HAVE_BSD"
 		;;
 	*android*)
-                echo "check android sdk"
+        echo "check android sdk"
 		check_android_sdk
 		add_make_enabled "HAVE_LINUX" "HAVE_ANDROID"
 		case "${HOST}" in

@@ -91,7 +91,7 @@ endif
 endif
 
 ifdef HAVE_ANDROID
-CC :=  clang
+CC := clang
 CXX := clang++
 AR := llvm-ar
 AS := clang
