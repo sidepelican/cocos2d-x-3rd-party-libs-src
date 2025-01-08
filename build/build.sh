@@ -240,23 +240,33 @@ function create_xcframework()
     echo "Creating xcframework as $library_name.xcframework"
 
     if "${should_combine}"; then
-        archive_name=combined.a
+        archive_name=lib${library_name}_combined.a
+        rm -f ios/$library_name/prebuilt/$archive_name
+        rm -f iossim/$library_name/prebuilt/$archive_name
         libtool -static -o ios/$library_name/prebuilt/$archive_name ios/$library_name/prebuilt/lib*.a
         libtool -static -o iossim/$library_name/prebuilt/$archive_name iossim/$library_name/prebuilt/lib*.a
     fi
 
     ios_lib_path="ios/$library_name/prebuilt/$archive_name"
     iossim_lib_path="iossim/$library_name/prebuilt/$archive_name"
+    ios_header_path="ios/$library_name/include"
+    iossim_header_path="iossim/$library_name/include"
 
     # 古いものがあれば削除
     rm -rf ios/$library_name/$library_name.xcframework
 
+    lib_args="-library $ios_lib_path"
+    if [ -d "$ios_header_path" ]; then
+        lib_args="$lib_args -headers $ios_header_path"
+    fi
+    lib_args="$lib_args -library $iossim_lib_path"
+    if [ -d "$iossim_header_path" ]; then
+        lib_args="$lib_args -headers $iossim_header_path"
+    fi
+
     set -x
     xcodebuild -create-xcframework \
-        -library $ios_lib_path \
-        -headers ios/$library_name/include \
-        -library $iossim_lib_path \
-        -headers iossim/$library_name/include \
+        $lib_args \
         -output ios/$library_name/$library_name.xcframework
     set +x
 
@@ -564,6 +574,10 @@ function build_libraries()
                         dep_archive_name=$dep_archive
                     fi
                     create_fat_library $platform_name $dep_archive $dep_archive_name
+
+                    if [ $platform_name = "iossim" ];then
+                        create_xcframework $dep_archive_name false
+                    fi
                 done
             fi
         fi
